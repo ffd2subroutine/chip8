@@ -1,0 +1,319 @@
+package chip8
+
+import (
+	"errors"
+	"log"
+	"math/rand"
+	"os"
+)
+
+var ErrUnknownOpcode = errors.New("unknown opcode")
+
+const (
+	// Programs are loaded starting at this address.
+	programAddress = 0x200 // uint16?
+	// 16 built-in characters are loaded starting at this address.
+	// Where we store the fonts is actually unspecified, but must be whithin
+	// memory reserved for the interpeter.
+	fontAddress = 0x50 // uint16?
+	screenSize  = 64 * 32
+)
+
+// The font set of 16 characters.
+// For example, the character 0 is represented as: 0xF0, 0x90, 0x90, 0x90, 0xF0.
+// Let's see the binary representations of these values:
+// 0xF0 11110000
+// 0x90 10010000
+// 0x90 10010000
+// 0x90 10010000
+// 0xF0 11110000
+// Now, if you closely take a look at the first four bits of each these values,
+// you will see a zero there.
+var (
+	fontset = [...]uint8{
+		0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+		0x20, 0x60, 0x20, 0x20, 0x70, // 1
+		0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+		0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+		0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+		0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+		0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+		0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+		0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+		0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+		0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+		0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+		0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+		0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+		0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+		0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+	}
+)
+
+type Chip8 struct {
+	// 4K of memory:
+	// 0x000 - 0x1FF reserved for the CHIP-8 interpreter where 0x050 - 0x0A0
+	// will be used as a storage space for 16 built-in characters.
+	// 0x200 - 0xFFF availabe, kind of, for the programs that we load from the ROM.
+	memory [4096]uint8
+	// General purpose data registers.
+	v [16]uint8
+	// The address register, also called the index register, used to store
+	// memory addresses when performing operations involving reading and
+	// writing to and from memory.
+	i uint16
+	// The program counter that holds the address of the next instruction to execute.
+	pc uint16
+	// The stack that is used to store return addresses when ever the CALL instruction gets executed.
+	stack [16]uint16
+	// The stack pointer.
+	sp uint8
+
+	delayTimer uint8
+	soundTimer uint8
+
+	keypad [16]uint8
+	screen [screenSize]uint8 // don't think we need a uint32 here
+}
+
+func New() *Chip8 {
+	c := &Chip8{
+		pc: programAddress,
+	}
+	// Load the fonts into CHIP-8 memory.
+	for i, v := range fontset {
+		c.memory[fontAddress+i] = v
+	}
+	return c
+}
+
+func (c *Chip8) LoadROM(name string) error {
+	// No need for io.ReadAll(f), this is shorter.
+	buf, err := os.ReadFile(name)
+	if err != nil {
+		return err
+	}
+	// TODO: check the ROM size, to prevent writing over available memory.
+	for i, v := range buf {
+		c.memory[programAddress+i] = v
+	}
+	return nil
+}
+
+func (c *Chip8) Cycle() {
+	// Fetch the opcode(instruction).
+	// The opcode in memory is 2 bytes long so we fetch two bytes pointed by
+	// the program counter, that means the locations pointed by pc and pc + 1,
+	// and we merge them.
+	// TODO: explain the process in more detail.
+	opcode := uint16(c.memory[c.pc])<<8 | uint16(c.memory[c.pc+1])
+	// Increment the program counter so that we point to the next opcode.
+	c.pc += 2
+
+	// Decode and execute the opcode
+	err := c.decode(opcode)
+	log.Println(err)
+
+	if c.delayTimer > 0 {
+		c.delayTimer--
+	}
+	// TODO
+	if c.soundTimer > 0 {
+		c.soundTimer--
+	}
+}
+
+func (c *Chip8) decode(opcode uint16) error {
+	// Get the first nibble(half-byte)
+	switch first := opcode >> 12; first {
+	case 0x0: // 0N[NN]
+		// We are only interested in the third and fourth nibble here.
+		switch nn := opcode & 0x00FF; nn {
+		case 0xE0: // CLS Clear the screen.
+			c.screen = [screenSize]uint8{}
+		case 0xEE: // RET Return from a subroutine
+			// First decrement the stack pointer.
+			c.sp--
+			// Then set the program counter to the address previously
+			// stored in the stack.
+			c.pc = c.stack[c.sp]
+		default:
+			return ErrUnknownOpcode
+		}
+	case 0x1: // 1NNN JP Jump to address nnn
+		// That means that we have to extract the second, third and fourth
+		// nibble from the opcode and store it in the program counter.
+		// nnn := opcode & 0x0FFF
+		// c.pc = nnn
+		c.pc = opcode & 0x0FFF
+	case 0x2: // 2NNN CALL Execute subroutine at address NNN
+		// Store the address in the program counter in to the stack
+		// and decrement the stack pointer
+		c.stack[c.sp] = c.pc
+		c.sp++
+		// Extract the address in the opcode and store it in the program counter.
+		c.pc = opcode & 0x0FFF
+	case 0x3: // 3XNN SE Skip the next instruction if the value of register Vx equals NN.
+		// Extract X from the opcode.
+		x := opcode & 0x0F00 >> 8
+		// Extract last two nibbles.
+		nn := opcode & 0x00FF
+		if c.v[x] == uint8(nn) {
+			c.pc += 2
+		}
+	case 0x4: // 4XNN SNE Skip the next instruction if the value of register Vx is not equal to NN.
+		x := opcode & 0x0F00 >> 8
+		nn := opcode & 0x00FF
+		if c.v[x] != uint8(nn) {
+			c.pc += 2
+		}
+	case 0x5: // 5XY0 SE Skip the next instruction if the value of register Vx is equal to the value of register Vy.
+		// Extract X from the opcode.
+		x := opcode & 0x0F00 >> 8
+		// Extract Y from the opcode.
+		y := opcode & 0x00F0 >> 4
+		if c.v[x] == c.v[y] {
+			c.pc += 2
+		}
+	case 0x6: // 6XNN Store number NN in register Vx
+		// Yes we could do this in one line: c.v[opcode&0x0F00>>8] = uint8(opcode&0x00FF)
+		x := opcode & 0x0F00 >> 8
+		nn := opcode & 0x00FF
+		c.v[x] = uint8(nn)
+	case 0x7: // 7XNN Add the value nn to register vx, in other words,
+		// increment the existing value of Vx by NN, Vx += NN.
+		x := opcode & 0x0F00 >> 8
+		nn := opcode & 0x00FF
+		c.v[x] += uint8(nn)
+	case 0x8: // 8XY[N] Based on what we have for the fourth nibble N we will do appropriate operation.
+		x := opcode & 0x0F00 >> 8
+		y := opcode & 0x00F0 >> 4
+		// Get the fourth nibble and act accordingly
+		switch n := opcode & 0x000F; n {
+		case 0x0: // 8XY0 Store the value of register Vy in register Vx.
+			c.v[x] = c.v[y]
+		case 0x1: // 8XY1 Set Vx to Vx OR Vy.
+			c.v[x] |= c.v[y]
+		case 0x2: // 8XY2 Set Vx to Vx AND Vy.
+			c.v[x] &= c.v[y]
+		case 0x3: // 8XY3 Set Vx to Vx XOR Vy.
+			c.v[x] ^= c.v[y]
+		case 0x4: // 8XY4 Add the value of register Vy to Vx. Set VF to 1 if carry occurs, 0 if not.
+			res := uint16(x) + uint16(y)
+			if res > 0xFF {
+				c.v[0xF] = 1
+			} else {
+				c.v[0xF] = 0
+			}
+			c.v[x] = uint8(res)
+		case 0x5: // 8XY5 Subtract the value of register Vy from Vx. Set VF to 0 if borrow occurs, 1 if not.
+			if c.v[x] > c.v[y] {
+				c.v[0xF] = 1
+			} else {
+				c.v[0xF] = 0
+			}
+			c.v[x] -= c.v[y]
+		case 0x6: // 8XY6 Store the value of register Vy(we are actually storing Vx instead) shifted right one bit in Vx
+			// and set register VF to the least significant bit prior to the shift.
+			c.v[0xF] = c.v[x] & 0x1 // 0b00000001
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
+			//c.v[x] = c.v[y] >> 1
+			c.v[x] >>= 1
+		case 0x7: // 8XY7 Set register Vx to the value of Vy minux Vx. Set VF to 0 if borrow occurs, 1 if not.
+			if c.v[y] > c.v[x] {
+				c.v[0xF] = 1
+			} else {
+				c.v[0xF] = 0
+			}
+			c.v[x] = c.v[y] - c.v[x]
+		case 0xE: // 8XYE Store the value of Vy(for now we will store it in Vx instead) shifted left one bit in Vx
+			// and set register VF to the most significant bit prior to the shift.
+			c.v[0xF] = c.v[x] & 0x80 >> 7 // c.v[x] & 0b10000000 >> 7 or we could shift first (c.v[x] >> 7) & 0x1 // 0b00000001
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
+			//c.v[x] = c.v[y] << 1
+			c.v[x] <<= 1
+		default:
+			return ErrUnknownOpcode
+		}
+	case 0x9: // 9XY0 Skip the next instruction if the value of Vx is not equal to Vy.
+		x := opcode & 0x0F00 >> 8
+		y := opcode & 0x00F0 >> 4
+		if c.v[x] != c.v[y] {
+			c.pc += 2
+		}
+	case 0xA: // ANNN Store memory address NNN in register I
+		// nnn := opcode & 0x0FFF
+		c.i = opcode & 0x0FFF
+	case 0xB: // BNNN Jump to address NNN + V0
+		nnn := opcode & 0x0FFF
+		c.pc = nnn + uint16(c.v[0])
+	case 0xC: // CXNN Set Vx to a random number with a mask of NN
+		x := opcode & 0x0F00 >> 8
+		nn := opcode & 0x00FF
+		c.v[x] = uint8(rand.Intn(256)) & uint8(nn)
+	case 0xD: // TODO:
+
+	case 0xE: // EX[NN] - We are only interested in X here, switch on NN.
+		x := opcode & 0x0F00 >> 8
+		switch nn := opcode & 0x0FF; nn {
+		case 0x9E: //  EX9E Skip the next instruction if the key stored in Vx is pressed.
+			if key := c.v[x]; c.keypad[key] == 0x1 {
+				c.pc += 2
+			}
+		case 0xA1: //  EXA1 Skip the next instruction if the key stored in Vx is not pressed.
+			if key := c.v[x]; c.keypad[key] == 0x0 {
+				c.pc += 2
+			}
+		default:
+			return ErrUnknownOpcode
+		}
+	case 0xF: // FX[NN] We are interested in X, act accordingly based on NN.
+		x := opcode & 0x0F00 >> 8
+		switch nn := opcode & 0x00FF; nn {
+		case 0x07: // FX07 Store the current value of the delay timer in Vx.
+			c.v[x] = c.delayTimer
+		case 0x0A: // FX0A Wait for a keypress and store the result in Vx.
+			// Keep rewinding the program counter until one of the keys in the keypad gets set to 0x1.
+			c.pc -= 2
+			// TODO: Use a switch statement here, extract the code and put it in a separate function.
+			for i := uint8(0); i < 16; i++ {
+				if c.keypad[i] == 0x1 {
+					c.v[x] = i
+					// Move to the next opcode.
+					c.pc = +2
+				}
+			}
+		case 0x15: // FX15 Set the delay timer to the value of Vx.
+			c.delayTimer = c.v[x]
+		case 0x18: // FX18 Set the sound timer to the value of Vx.
+			c.soundTimer = c.v[x]
+		case 0x1E: // FX1E Add the value stored in Vx to I.
+			c.i += uint16(c.v[x])
+		case 0x29: // TODO: FX29 Set I to the memory address of the sprite data stored in Vx.
+
+		case 0x33: // FX33 Store the binary-coded decimal equivalent of the value stored in register Vx at addresses I, I + 1, and I + 2
+			c.memory[c.i] = c.v[x] / 100
+			c.memory[c.i+1] = c.v[x] / 10 % 10
+			c.memory[c.i+2] = c.v[x] % 100 % 10
+		case 0x55: // FX55 Store the values of V0 to Vx inclusive in memory starting at address I. I is set to I + X + 1 after operation
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
+			for i := uint16(0); i <= x; i++ {
+				c.memory[c.i+i] = c.v[i]
+			}
+			// Update I.
+			//c.i = c.i + x + 1
+		case 0x65: // FX65 Fill V0 to Vx inclusive with the values stored in memory starting at address I. I is set to I + X + 1 after operation
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
+			for i := uint16(0); i <= x; i++ {
+				c.v[i] = c.memory[c.i+i]
+			}
+			// Update I.
+			//c.i = c.i + x + 1
+		default:
+			return ErrUnknownOpcode
+		}
+	default:
+		return ErrUnknownOpcode
+	}
+	return nil
+}
