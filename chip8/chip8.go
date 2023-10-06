@@ -16,21 +16,27 @@ const (
 	// Where we store the fonts is actually unspecified, but must be whithin
 	// memory reserved for the interpeter.
 	fontAddress = 0x50 // uint16?
-	screenSize  = 64 * 32
+	fontSize    = 5
+
+	screenWidth  = 64
+	screenHeight = 32
 )
 
-// The font set of 16 characters.
+// The font set of 16 built-in characters(sprites).
 // For example, the character 0 is represented as: 0xF0, 0x90, 0x90, 0x90, 0xF0.
 // Let's see the binary representations of these values:
-// 0xF0 11110000
-// 0x90 10010000
-// 0x90 10010000
-// 0x90 10010000
-// 0xF0 11110000
+// HEX  Binary   Sprite
+// 0xF0 11110000 ****____
+// 0x90 10010000 *__*____
+// 0x90 10010000 *__*____
+// 0x90 10010000 *__*____
+// 0xF0 11110000 ****____
 // Now, if you closely take a look at the first four bits of each these values,
-// you will see a zero there.
+// you will see a zero there. We can see that the width of the sprite that
+// represents this character is 8 bits(1 byte) but that applies to any sprite
+// not just to characters.
 var (
-	fontset = [...]uint8{
+	fontset = [fontSize * 16]uint8{
 		0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
 		0x20, 0x60, 0x20, 0x20, 0x70, // 1
 		0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -73,7 +79,7 @@ type Chip8 struct {
 	soundTimer uint8
 
 	keypad [16]uint8
-	screen [screenSize]uint8 // don't think we need a uint32 here
+	screen [screenWidth * screenHeight]uint8
 }
 
 func New() *Chip8 {
@@ -130,7 +136,7 @@ func (c *Chip8) decode(opcode uint16) error {
 		// We are only interested in the third and fourth nibble here.
 		switch nn := opcode & 0x00FF; nn {
 		case 0xE0: // CLS Clear the screen.
-			c.screen = [screenSize]uint8{}
+			c.screen = [screenWidth * screenHeight]uint8{}
 		case 0xEE: // RET Return from a subroutine
 			// First decrement the stack pointer.
 			c.sp--
@@ -251,17 +257,41 @@ func (c *Chip8) decode(opcode uint16) error {
 		x := opcode & 0x0F00 >> 8
 		nn := opcode & 0x00FF
 		c.v[x] = uint8(rand.Intn(256)) & uint8(nn)
-	case 0xD: // TODO:
+	case 0xD: // DXYN
+		x := opcode & 0xF00 >> 8
+		y := opcode & 0x0F0 >> 4
+		// Number of bytes for the sprite that we have to load from memory.
+		n := opcode & 0x00F
+		xpos := c.v[x]
+		ypos := c.v[y]
 
+		c.v[0xF] = 0
+		// Get all the bytes for the sprite.
+		for i := uint16(0); i < n; i++ {
+			sbyte := c.memory[c.i+i]
+			//Go through all the pixels(bits) in the sprite byte.
+			for j := uint16(0); j < 8; j++ {
+				// Check if the sprite pixel is set.
+				if spix := sbyte & (0x80 >> j); spix == 1 {
+					// Get the screen pixel matching this sprite pixel's position.
+					idx := uint16(xpos) + j + (uint16(ypos)+i)*screenWidth
+					// If both the sprite pixel and screen pixel are set then set VF to 0x1.
+					if c.screen[idx] == 1 {
+						c.v[0xF] = 1
+					}
+					c.screen[idx] ^= 1
+				}
+			}
+		}
 	case 0xE: // EX[NN] - We are only interested in X here, switch on NN.
 		x := opcode & 0x0F00 >> 8
 		switch nn := opcode & 0x0FF; nn {
 		case 0x9E: //  EX9E Skip the next instruction if the key stored in Vx is pressed.
-			if key := c.v[x]; c.keypad[key] == 0x1 {
+			if key := c.v[x]; c.keypad[key] == 1 {
 				c.pc += 2
 			}
 		case 0xA1: //  EXA1 Skip the next instruction if the key stored in Vx is not pressed.
-			if key := c.v[x]; c.keypad[key] == 0x0 {
+			if key := c.v[x]; c.keypad[key] == 0 {
 				c.pc += 2
 			}
 		default:
@@ -277,7 +307,7 @@ func (c *Chip8) decode(opcode uint16) error {
 			c.pc -= 2
 			// TODO: Use a switch statement here, extract the code and put it in a separate function.
 			for i := uint8(0); i < 16; i++ {
-				if c.keypad[i] == 0x1 {
+				if c.keypad[i] == 1 {
 					c.v[x] = i
 					// Move to the next opcode.
 					c.pc = +2
@@ -289,24 +319,26 @@ func (c *Chip8) decode(opcode uint16) error {
 			c.soundTimer = c.v[x]
 		case 0x1E: // FX1E Add the value stored in Vx to I.
 			c.i += uint16(c.v[x])
-		case 0x29: // TODO: FX29 Set I to the memory address of the sprite data stored in Vx.
+		case 0x29: // FX29 Set I to the memory address of one of the 16 built-in characters stored in Vx.
+			// So if Vx == 0, we need to set I to the address of 0 character(sprite)
+			c.i = fontAddress + uint16(c.v[x])*fontSize
 
 		case 0x33: // FX33 Store the binary-coded decimal equivalent of the value stored in register Vx at addresses I, I + 1, and I + 2
 			c.memory[c.i] = c.v[x] / 100
 			c.memory[c.i+1] = c.v[x] / 10 % 10
 			c.memory[c.i+2] = c.v[x] % 100 % 10
 		case 0x55: // FX55 Store the values of V0 to Vx inclusive in memory starting at address I. I is set to I + X + 1 after operation
-			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
 			for i := uint16(0); i <= x; i++ {
 				c.memory[c.i+i] = c.v[i]
 			}
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
 			// Update I.
 			//c.i = c.i + x + 1
 		case 0x65: // FX65 Fill V0 to Vx inclusive with the values stored in memory starting at address I. I is set to I + X + 1 after operation
-			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
 			for i := uint16(0); i <= x; i++ {
 				c.v[i] = c.memory[c.i+i]
 			}
+			// NOTE: https://github.com/mattmikolay/chip-8/wiki/CHIP%E2%80%908-Instruction-Set#notes
 			// Update I.
 			//c.i = c.i + x + 1
 		default:
