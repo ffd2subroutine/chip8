@@ -267,19 +267,20 @@ func (c *Chip8) decode(opcode uint16) error {
 
 		c.v[0xF] = 0
 		// Get all the bytes for the sprite.
-		for i := uint16(0); i < n; i++ {
-			sbyte := c.memory[c.i+i]
+		for yy := uint16(0); yy < n; yy++ {
+			sbyte := c.memory[c.i+yy]
 			//Go through all the pixels(bits) in the sprite byte.
-			for j := uint16(0); j < 8; j++ {
-				// Check if the sprite pixel is set.
-				if spix := sbyte & (0x80 >> j); spix == 1 {
-					// Get the screen pixel matching this sprite pixel's position.
-					idx := uint16(xpos) + j + (uint16(ypos)+i)*screenWidth
-					// If both the sprite pixel and screen pixel are set then set VF to 0x1.
+			for xx := uint16(0); xx < 8; xx++ {
+				// If the sprite pixel is set then check the value of the pixel on our screen as well.
+				if spix := sbyte & (0x80 >> xx); spix == 1 {
+					// Calculate the index of the screen pixel matching this sprite pixel's position.
+					idx := (uint16(xpos)+xx)%screenWidth + ((uint16(ypos)+yy)%screenHeight)*screenWidth
+					// If the screen pixel is also set then set VF to 1.
 					if c.screen[idx] == 1 {
 						c.v[0xF] = 1
 					}
 					c.screen[idx] ^= 1
+					// TODO: set the draw flag so that we can issue a draw call in our rendering code.
 				}
 			}
 		}
