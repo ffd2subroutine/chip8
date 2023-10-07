@@ -137,6 +137,7 @@ func (c *Chip8) decode(opcode uint16) error {
 		switch nn := opcode & 0x00FF; nn {
 		case 0xE0: // CLS Clear the screen.
 			c.screen = [screenWidth * screenHeight]uint8{}
+			// TODO: set the draw flag so that we can issue an update in our rendering code.
 		case 0xEE: // RET Return from a subroutine
 			// First decrement the stack pointer.
 			c.sp--
