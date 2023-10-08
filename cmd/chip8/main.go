@@ -10,7 +10,7 @@ import (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Provide a ROM")
+		fmt.Println("Provide a ROM file!")
 		os.Exit(1)
 	}
 	rom := os.Args[1]
@@ -22,16 +22,12 @@ func main() {
 	defer e.Shutdown()
 
 	e.LoadROM(rom)
-	last := time.Now()
+
 	exit := false
 	for !exit {
 		exit = e.ProcessEvents()
-
-		now := time.Now()
-		dt := now.Sub(last)
-		if dt > 1 {
-			e.Cycle()
-			e.UpdateScreen()
-		}
+		e.Cycle()
+		e.UpdateScreen()
+		time.Sleep(14 * time.Millisecond)
 	}
 }

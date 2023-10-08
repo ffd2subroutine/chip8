@@ -113,12 +113,9 @@ func (c *Chip8) Cycle() {
 	// and we merge them.
 	// TODO: explain the process in more detail.
 	opcode := uint16(c.memory[c.pc])<<8 | uint16(c.memory[c.pc+1])
-	//fmt.Printf("%x\n", opcode)
-	//fmt.Printf("PC before increment: %x\n", c.pc)
 
 	// Increment the program counter so that we point to the next opcode.
 	c.pc += 2
-	//fmt.Printf("%x\n", c.pc)
 
 	// TODO: do we just log unknown opcodes?
 	// Decode and execute the opcode
@@ -134,31 +131,15 @@ func (c *Chip8) Cycle() {
 	if c.soundTimer > 0 {
 		c.soundTimer--
 	}
-	/*
-		col := 0
-		for _, v := range c.screen {
-			fmt.Printf("%d", v)
-			if col > 62 {
-				fmt.Println("")
-				col = 0
-			} else {
-				col++
-			}
-		}
-		fmt.Println("")
-	*/
 }
 
 func (c *Chip8) decode(opcode uint16) error {
-	//fmt.Println("in decode")
 	// Get the first nibble(half-byte)
 	switch first := opcode >> 12; first {
 	case 0x0: // 0N[NN]
-		fmt.Println("in 0x0")
 		// We are only interested in the third and fourth nibble here.
 		switch nn := opcode & 0x00FF; nn {
 		case 0xE0: // CLS Clear the screen.
-			fmt.Println("in 0x00E")
 			c.screen = [screenWidth * screenHeight]uint32{}
 			// TODO: set the draw flag so that we can issue an update in our rendering code.
 		case 0xEE: // RET Return from a subroutine
@@ -171,7 +152,6 @@ func (c *Chip8) decode(opcode uint16) error {
 			return ErrUnknownOpcode
 		}
 	case 0x1: // 1NNN JP Jump to address nnn
-		fmt.Println("in 0x1")
 		// That means that we have to extract the second, third and fourth
 		// nibble from the opcode and store it in the program counter.
 		// nnn := opcode & 0x0FFF
@@ -179,7 +159,6 @@ func (c *Chip8) decode(opcode uint16) error {
 		c.pc = opcode & 0x0FFF
 		//fmt.Printf("PC in 0x1: %x\n", c.pc)
 	case 0x2: // 2NNN CALL Execute subroutine at address NNN
-		fmt.Println("in 0x2")
 		// Store the address in the program counter in to the stack
 		// and decrement the stack pointer
 		c.stack[c.sp] = c.pc
@@ -187,7 +166,6 @@ func (c *Chip8) decode(opcode uint16) error {
 		// Extract the address in the opcode and store it in the program counter.
 		c.pc = opcode & 0x0FFF
 	case 0x3: // 3XNN SE Skip the next instruction if the value of register Vx equals NN.
-		fmt.Println("in 0x3")
 		// Extract X from the opcode.
 		x := opcode & 0x0F00 >> 8
 		// Extract last two nibbles.
@@ -196,14 +174,12 @@ func (c *Chip8) decode(opcode uint16) error {
 			c.pc += 2
 		}
 	case 0x4: // 4XNN SNE Skip the next instruction if the value of register Vx is not equal to NN.
-		fmt.Println("in 0x4")
 		x := opcode & 0x0F00 >> 8
 		nn := opcode & 0x00FF
 		if c.v[x] != uint8(nn) {
 			c.pc += 2
 		}
 	case 0x5: // 5XY0 SE Skip the next instruction if the value of register Vx is equal to the value of register Vy.
-		fmt.Println("in 0x5")
 
 		// Extract X from the opcode.
 		x := opcode & 0x0F00 >> 8
@@ -213,19 +189,16 @@ func (c *Chip8) decode(opcode uint16) error {
 			c.pc += 2
 		}
 	case 0x6: // 6XNN Store number NN in register Vx
-		fmt.Println("in 0x6")
 		// Yes we could do this in one line: c.v[opcode&0x0F00>>8] = uint8(opcode&0x00FF)
 		x := opcode & 0x0F00 >> 8
 		nn := opcode & 0x00FF
 		c.v[x] = uint8(nn)
 	case 0x7: // 7XNN Add the value nn to register vx, in other words,
-		fmt.Println("in 0x7")
 		// increment the existing value of Vx by NN, Vx += NN.
 		x := opcode & 0x0F00 >> 8
 		nn := opcode & 0x00FF
 		c.v[x] += uint8(nn)
 	case 0x8: // 8XY[N] Based on what we have for the fourth nibble N we will do appropriate operation.
-		fmt.Println("in 0x8")
 		x := opcode & 0x0F00 >> 8
 		y := opcode & 0x00F0 >> 4
 		// Get the fourth nibble and act accordingly
@@ -276,27 +249,22 @@ func (c *Chip8) decode(opcode uint16) error {
 			return ErrUnknownOpcode
 		}
 	case 0x9: // 9XY0 Skip the next instruction if the value of Vx is not equal to Vy.
-		fmt.Println("in 0x9")
 		x := opcode & 0x0F00 >> 8
 		y := opcode & 0x00F0 >> 4
 		if c.v[x] != c.v[y] {
 			c.pc += 2
 		}
 	case 0xA: // ANNN Store memory address NNN in register I
-		fmt.Println("in 0xA")
 		// nnn := opcode & 0x0FFF
 		c.i = opcode & 0x0FFF
 	case 0xB: // BNNN Jump to address NNN + V0
-		fmt.Println("in 0xB")
 		nnn := opcode & 0x0FFF
 		c.pc = nnn + uint16(c.v[0])
 	case 0xC: // CXNN Set Vx to a random number with a mask of NN
-		fmt.Println("in 0xC")
 		x := opcode & 0x0F00 >> 8
 		nn := opcode & 0x00FF
 		c.v[x] = uint8(rand.Intn(256)) & uint8(nn)
 	case 0xD: // DXYN
-		fmt.Println("in 0xD")
 		x := opcode & 0x0F00 >> 8
 		y := opcode & 0x00F0 >> 4
 		// Number of bytes for the sprite that we have to load from memory.
@@ -311,10 +279,11 @@ func (c *Chip8) decode(opcode uint16) error {
 			//Go through all the pixels(bits) in the sprite byte.
 			for xx := uint16(0); xx < 8; xx++ {
 				// If the sprite pixel is set then check the value of the pixel on our screen as well.
-				if spix := sbyte & (0x80 >> xx); spix == 1 {
+				//if spix := sbyte & (0x80 >> xx); spix != 0 {
+				if spix := sbyte >> (7 - xx) & 0x1; spix == 1 {
 					// Calculate the index of the screen pixel matching this sprite pixel's position.
-					//idx := (uint16(xpos)+xx)%screenWidth + ((uint16(ypos)+yy)%screenHeight)*screenWidth
-					idx := (uint16(xpos) + xx) + (uint16(ypos)+yy)*screenWidth
+					idx := (uint16(xpos)+xx)%screenWidth + ((uint16(ypos)+yy)%screenHeight)*screenWidth
+					//idx := uint16(xpos) + xx + (uint16(ypos)+yy)*screenWidth
 					// If the screen pixel is also set then set VF to 1.
 					if c.screen[idx] == 0xFFFFFFFF {
 						c.v[0xF] = 1
@@ -325,7 +294,6 @@ func (c *Chip8) decode(opcode uint16) error {
 			}
 		}
 	case 0xE: // EX[NN] - We are only interested in X here, switch on NN.
-		fmt.Println("in 0xE")
 		x := opcode & 0x0F00 >> 8
 		switch nn := opcode & 0x0FF; nn {
 		case 0x9E: //  EX9E Skip the next instruction if the key stored in Vx is pressed.
@@ -340,7 +308,6 @@ func (c *Chip8) decode(opcode uint16) error {
 			return ErrUnknownOpcode
 		}
 	case 0xF: // FX[NN] We are interested in X, act accordingly based on NN.
-		fmt.Println("in 0xF")
 		x := opcode & 0x0F00 >> 8
 		switch nn := opcode & 0x00FF; nn {
 		case 0x07: // FX07 Store the current value of the delay timer in Vx.
