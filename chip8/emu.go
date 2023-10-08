@@ -152,7 +152,16 @@ func (e *Emulator) ProcessEvents() bool {
 }
 
 func (e *Emulator) UpdateScreen() {
-	e.texture.Update(nil, unsafe.Pointer(&e.chip8.screen), screenWidth)
+	/*
+		screen := [64 * 32]uint32{0}
+		for i := range screen {
+			//screen[i] = 0x00777777 + uint32(rand.Intn(0x00AAAAAA))
+			screen[i] = 0x000000FF
+		}
+		e.texture.Update(nil, unsafe.Pointer(&screen), 4*64)
+	*/
+	e.texture.Update(nil, unsafe.Pointer(&e.chip8.screen), 4*screenWidth)
+	//e.window.UpdateSurface()
 	e.renderer.Clear()
 	e.renderer.Copy(e.texture, nil, nil)
 	e.renderer.Present()
