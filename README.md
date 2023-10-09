@@ -1,4 +1,5 @@
 # CHIP-8 [Work in progress]
+[The core logic](chip8/chip8.go) is almost done, the rest no so much.
 Current progress   
 ![Current progress - Tetris](gallery/tetris.gif)
 ### References/Credits:
