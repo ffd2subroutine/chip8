@@ -28,6 +28,6 @@ func main() {
 		exit = e.ProcessEvents()
 		e.Cycle()
 		e.UpdateScreen()
-		time.Sleep(14 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
